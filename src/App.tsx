@@ -5,8 +5,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
-  Save, 
-  FolderOpen, 
   Undo2, 
   Redo2, 
   Key, 
@@ -30,7 +28,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { slugify, downloadJson, downloadZip } from './utils';
+import { slugify } from './utils';
 import { ProjectState, HistoryState, Scene, Character, Product, Script, ImageVersion } from './types';
 import { AssetManager } from './components/AssetManager';
 import { SceneManager } from './components/SceneManager';
@@ -96,14 +94,28 @@ export default function App() {
   const [showApiModal, setShowApiModal] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [showWarningModal, setShowWarningModal] = useState<{ message: string } | null>(null);
+  const [scriptToDelete, setScriptToDelete] = useState<string | null>(null);
   const [viewingSceneId, setViewingSceneId] = useState<string | null>(null);
   const [tempApiKey, setTempApiKey] = useState('');
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [editingScriptTitle, setEditingScriptTitle] = useState('');
 
+  const apiKeyRef = useRef(history.present.apiKey);
   const headerRef = useRef<HTMLDivElement>(null);
 
   const t = translations[history.present.language];
+
+  // Sync apiKeyRef with saved apiKey
+  useEffect(() => {
+    apiKeyRef.current = history.present.apiKey;
+  }, [history.present.apiKey]);
+
+  // Sync tempApiKey with saved apiKey when settings tab is active or API modal is shown
+  useEffect(() => {
+    if (history.present.activeTab === 'settings' || showApiModal) {
+      setTempApiKey(history.present.apiKey);
+    }
+  }, [history.present.activeTab, showApiModal, history.present.apiKey]);
 
   const updateState = (newState: Partial<ProjectState>) => {
     setHistory(prev => ({
@@ -137,32 +149,6 @@ export default function App() {
 
   const canUndo = history.past.length > 0;
   const canRedo = history.future.length > 0;
-
-  const handleSave = () => {
-    const data = JSON.stringify(history.present, null, 2);
-    downloadJson(data, slugify(history.present.projectName || 'video-ai-project'));
-  };
-
-  const handleOpen = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const content = JSON.parse(e.target?.result as string);
-          updateState(content);
-        } catch (err) {
-          alert(t.generationFailed);
-        }
-      };
-      reader.readAsText(file);
-    };
-    input.click();
-  };
 
   const handleProjectNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     updateState({ projectName: e.target.value });
@@ -206,12 +192,17 @@ export default function App() {
 
   const handleDeleteScript = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(t.confirmDeleteScript)) return;
-    const newScripts = history.present.scripts.filter(s => s.id !== id);
+    setScriptToDelete(id);
+  };
+
+  const confirmDeleteScript = () => {
+    if (!scriptToDelete) return;
+    const newScripts = history.present.scripts.filter(s => s.id !== scriptToDelete);
     updateState({ 
       scripts: newScripts,
-      activeScriptId: history.present.activeScriptId === id ? null : history.present.activeScriptId
+      activeScriptId: history.present.activeScriptId === scriptToDelete ? null : history.present.activeScriptId
     });
+    setScriptToDelete(null);
   };
 
   const handleStartEditScript = (script: Script, e: React.MouseEvent) => {
@@ -238,7 +229,7 @@ export default function App() {
     if (!activeScript) return;
     
     try {
-      const apiKey = history.present.apiKey || process.env.GEMINI_API_KEY;
+      const apiKey = apiKeyRef.current || process.env.GEMINI_API_KEY;
       const ai = new GoogleGenAI({ apiKey });
       
       let prompt = "";
@@ -346,7 +337,7 @@ export default function App() {
     }, 500);
 
     try {
-      const apiKey = history.present.apiKey || process.env.GEMINI_API_KEY;
+      const apiKey = apiKeyRef.current || process.env.GEMINI_API_KEY;
       const ai = new GoogleGenAI({ apiKey });
       
       const parts: any[] = [];
@@ -574,24 +565,6 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
     }
   };
 
-  const handleDownloadAll = async () => {
-    if (!history.present.projectName) {
-      alert(t.projectNameRequired);
-      return;
-    }
-    if (!activeScript) return;
-    const images = activeScript.scenes
-      .filter(s => s.imageUrl)
-      .map(s => ({ name: s.sceneName, url: s.imageUrl! }));
-    
-    if (images.length === 0) {
-      alert(t.noImagesGenerated);
-      return;
-    }
-
-    await downloadZip(images, slugify(`${history.present.projectName}-${activeScript.title}`));
-  };
-
   const setMainImage = (sceneId: string, versionId: string) => {
     if (!activeScript) return;
     const updatedScenes = activeScript.scenes.map(s => {
@@ -696,18 +669,6 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
           </div>
 
           <div className="flex items-center gap-2 md:gap-3 w-full sm:w-auto justify-center sm:justify-end">
-            <button onClick={handleOpen} className="btn-primary flex items-center gap-2 px-3 py-2 md:px-4 md:py-2" title={`${t.open} (Ctrl+O)`}>
-              <FolderOpen size={16} className="md:w-[18px] md:h-[18px]" />
-              <span className="hidden lg:inline">{t.open}</span>
-            </button>
-            <button onClick={handleSave} className="btn-primary flex items-center gap-2 px-3 py-2 md:px-4 md:py-2" title={`${t.save} (Ctrl+S)`}>
-              <Save size={16} className="md:w-[18px] md:h-[18px]" />
-              <span className="hidden lg:inline">{t.save}</span>
-            </button>
-            <button onClick={handleDownloadAll} className="btn-primary flex items-center gap-2 px-3 py-2 md:px-4 md:py-2 bg-gradient-to-r from-blue-700 to-blue-500">
-              <Download size={16} className="md:w-[18px] md:h-[18px]" />
-              <span className="hidden lg:inline">{t.downloadAll}</span>
-            </button>
             <div className="h-6 w-px bg-gray-200 mx-1 md:mx-2" />
             <div className="flex items-center gap-1">
               <button 
@@ -1116,6 +1077,46 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
               >
                 {t.understand}
               </button>
+            </motion.div>
+          </div>
+        )}
+
+        {scriptToDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setScriptToDelete(null)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="relative w-full max-w-md bg-white rounded-[32px] shadow-2xl p-10 text-center"
+            >
+              <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 className="text-red-500 w-10 h-10" />
+              </div>
+              <h3 className="text-2xl font-black text-gray-800 mb-4">{t.confirmDeleteScript}</h3>
+              <p className="text-gray-500 leading-relaxed mb-8">
+                {history.present.scripts.find(s => s.id === scriptToDelete)?.title}
+              </p>
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setScriptToDelete(null)}
+                  className="flex-1 py-4 bg-gray-100 text-gray-600 rounded-2xl font-bold text-lg hover:bg-gray-200 transition-colors"
+                >
+                  {t.cancel}
+                </button>
+                <button 
+                  onClick={confirmDeleteScript}
+                  className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-bold text-lg hover:bg-red-700 transition-colors shadow-lg shadow-red-900/20"
+                >
+                  {t.delete}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
