@@ -97,6 +97,7 @@ export default function App() {
   const [scriptToDelete, setScriptToDelete] = useState<string | null>(null);
   const [viewingSceneId, setViewingSceneId] = useState<string | null>(null);
   const [tempApiKey, setTempApiKey] = useState('');
+  const [isValidatingApiKey, setIsValidatingApiKey] = useState(false);
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [editingScriptTitle, setEditingScriptTitle] = useState('');
 
@@ -152,6 +153,38 @@ export default function App() {
 
   const handleProjectNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     updateState({ projectName: e.target.value });
+  };
+
+  const handleSaveApiKey = async () => {
+    if (!tempApiKey.trim()) {
+      alert(t.error + ": API Key " + t.cannotBeEmpty);
+      return;
+    }
+
+    setIsValidatingApiKey(true);
+    try {
+      // Validate API Key with a simple request
+      const ai = new GoogleGenAI({ apiKey: tempApiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: "test"
+      });
+      
+      if (response) {
+        // Update state and ref immediately
+        updateState({ apiKey: tempApiKey });
+        apiKeyRef.current = tempApiKey;
+        setShowApiModal(false);
+        alert(t.saveConfig + " " + t.success);
+      } else {
+        throw new Error("Invalid response");
+      }
+    } catch (err) {
+      console.error("API Key validation failed:", err);
+      alert(t.error + ": API Key " + (history.present.language === 'vi' ? "không hợp lệ hoặc không thể kết nối." : "is invalid or cannot connect."));
+    } finally {
+      setIsValidatingApiKey(false);
+    }
   };
 
   // Helpers
@@ -994,16 +1027,14 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
                         {t.apiKeyNote}
                       </p>
                       <button 
-                        onClick={() => {
-                          if (tempApiKey.trim()) {
-                            updateState({ apiKey: tempApiKey });
-                            alert(t.saveConfig + " " + t.success);
-                          } else {
-                            alert(t.error + ": API Key " + t.cannotBeEmpty);
-                          }
-                        }}
-                        className="w-full btn-primary py-4 font-bold text-lg shadow-xl shadow-[#3667c5]/20"
+                        onClick={handleSaveApiKey}
+                        disabled={isValidatingApiKey}
+                        className={cn(
+                          "w-full btn-primary py-4 font-bold text-lg shadow-xl shadow-[#3667c5]/20 flex items-center justify-center gap-2",
+                          isValidatingApiKey && "opacity-70 cursor-not-allowed"
+                        )}
                       >
+                        {isValidatingApiKey && <RefreshCw className="animate-spin" size={20} />}
                         {t.saveConfig}
                       </button>
                     </div>
@@ -1229,17 +1260,14 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
                   />
                 </div>
                 <button 
-                  onClick={() => {
-                    if (tempApiKey.trim()) {
-                      updateState({ apiKey: tempApiKey });
-                      setShowApiModal(false);
-                      alert(t.saveConfig + " " + t.success);
-                    } else {
-                      alert(t.error + ": API Key " + t.cannotBeEmpty);
-                    }
-                  }}
-                  className="w-full btn-primary py-3 font-bold"
+                  onClick={handleSaveApiKey}
+                  disabled={isValidatingApiKey}
+                  className={cn(
+                    "w-full btn-primary py-3 font-bold flex items-center justify-center gap-2",
+                    isValidatingApiKey && "opacity-70 cursor-not-allowed"
+                  )}
                 >
+                  {isValidatingApiKey && <RefreshCw className="animate-spin" size={20} />}
                   {t.saveConfig}
                 </button>
               </div>
