@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #3667c5;
+  --color-primary-gradient: linear-gradient(135deg, #3667c5 0%, #5a8df0 100%);
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(54, 103, 197, 0.3) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: rgba(54, 103, 197, 0.3);
+    border-radius: 20px;
+    border: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(54, 103, 197, 0.6);
+  }
+}
+
+.bg-glow {
+  background: radial-gradient(circle at 50% 50%, rgba(54, 103, 197, 0.05) 0%, transparent 70%);
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #3667c5 0%, #5a8df0 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.btn-primary {
+  @apply bg-[#3667c5] text-white px-4 py-2 rounded-lg transition-all duration-300 hover:bg-gradient-to-r hover:from-[#3667c5] hover:to-[#5a8df0] shadow-md hover:shadow-lg active:scale-95;
+}
+
+.card-hover {
+  @apply transition-all duration-300 hover:bg-gradient-to-br hover:from-white hover:to-blue-50 border border-transparent hover:border-[#3667c5]/20;
+}
