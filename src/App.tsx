@@ -22,9 +22,10 @@ import {
   Trash2,
   Edit2,
   Clock,
-  FileText
+  FileText,
+  Check,
+  Info
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -43,7 +44,6 @@ export function cn(...inputs: ClassValue[]) {
 
 const INITIAL_STATE: ProjectState = {
   projectName: '',
-  apiKey: '',
   activeTab: 'home',
   language: 'vi',
   scripts: [],
@@ -55,13 +55,21 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   maxRetries: number = 3,
-  initialDelay: number = 2000
+  initialDelay: number = 2000,
+  signal?: AbortSignal,
+  onRetry?: (attempt: number, delay: number, error: any) => void
 ): Promise<T> {
   let retries = 0;
   while (true) {
+    if (signal?.aborted) {
+      throw new Error("Aborted");
+    }
     try {
       return await fn();
     } catch (error: any) {
+      if (signal?.aborted) {
+        throw new Error("Aborted");
+      }
       const errorStr = JSON.stringify(error);
       const isQuotaError = 
         error?.status === 'RESOURCE_EXHAUSTED' || 
@@ -70,9 +78,17 @@ async function retryWithBackoff<T>(
         errorStr.includes('429') ||
         errorStr.includes('RESOURCE_EXHAUSTED');
 
-      if (isQuotaError && retries < maxRetries) {
+      const isInternalError = 
+        error?.status === 'INTERNAL' || 
+        error?.code === 500 || 
+        (error?.message && error.message.includes('500')) ||
+        errorStr.includes('500') ||
+        errorStr.includes('INTERNAL');
+
+      if ((isQuotaError || isInternalError) && retries < maxRetries) {
         const delay = initialDelay * Math.pow(2, retries);
-        console.warn(`Quota exceeded. Retrying in ${delay}ms... (Attempt ${retries + 1}/${maxRetries})`);
+        if (onRetry) onRetry(retries + 1, delay, error);
+        console.warn(`${isQuotaError ? 'Quota exceeded' : 'Internal error'}. Retrying in ${delay}ms... (Attempt ${retries + 1}/${maxRetries})`);
         await sleep(delay);
         retries++;
         continue;
@@ -91,32 +107,25 @@ export default function App() {
   });
   const [zoom, setZoom] = useState(100);
   const [isSticky, setIsSticky] = useState(false);
-  const [showApiModal, setShowApiModal] = useState(false);
-  const [showQrModal, setShowQrModal] = useState(false);
-  const [showWarningModal, setShowWarningModal] = useState<{ message: string } | null>(null);
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'error' | 'info' }[]>([]);
+  const [showWarningModal, setShowWarningModal] = useState<{ message: string, onConfirm?: () => void } | null>(null);
   const [scriptToDelete, setScriptToDelete] = useState<string | null>(null);
   const [viewingSceneId, setViewingSceneId] = useState<string | null>(null);
-  const [tempApiKey, setTempApiKey] = useState('');
-  const [isValidatingApiKey, setIsValidatingApiKey] = useState(false);
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [editingScriptTitle, setEditingScriptTitle] = useState('');
+  const abortControllersRef = useRef<Record<string, AbortController>>({});
 
-  const apiKeyRef = useRef(history.present.apiKey);
   const headerRef = useRef<HTMLDivElement>(null);
 
   const t = translations[history.present.language];
 
-  // Sync apiKeyRef with saved apiKey
-  useEffect(() => {
-    apiKeyRef.current = history.present.apiKey;
-  }, [history.present.apiKey]);
-
-  // Sync tempApiKey with saved apiKey when settings tab is active or API modal is shown
-  useEffect(() => {
-    if (history.present.activeTab === 'settings' || showApiModal) {
-      setTempApiKey(history.present.apiKey);
-    }
-  }, [history.present.activeTab, showApiModal, history.present.apiKey]);
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  }, []);
 
   const updateState = (newState: Partial<ProjectState>) => {
     setHistory(prev => ({
@@ -153,38 +162,6 @@ export default function App() {
 
   const handleProjectNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     updateState({ projectName: e.target.value });
-  };
-
-  const handleSaveApiKey = async () => {
-    if (!tempApiKey.trim()) {
-      alert(t.error + ": API Key " + t.cannotBeEmpty);
-      return;
-    }
-
-    setIsValidatingApiKey(true);
-    try {
-      // Validate API Key with a simple request
-      const ai = new GoogleGenAI({ apiKey: tempApiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: "test"
-      });
-      
-      if (response) {
-        // Update state and ref immediately
-        updateState({ apiKey: tempApiKey });
-        apiKeyRef.current = tempApiKey;
-        setShowApiModal(false);
-        alert(t.saveConfig + " " + t.success);
-      } else {
-        throw new Error("Invalid response");
-      }
-    } catch (err) {
-      console.error("API Key validation failed:", err);
-      alert(t.error + ": API Key " + (history.present.language === 'vi' ? "không hợp lệ hoặc không thể kết nối." : "is invalid or cannot connect."));
-    } finally {
-      setIsValidatingApiKey(false);
-    }
   };
 
   // Helpers
@@ -262,8 +239,12 @@ export default function App() {
     if (!activeScript) return;
     
     try {
-      const apiKey = apiKeyRef.current || process.env.GEMINI_API_KEY;
-      const ai = new GoogleGenAI({ apiKey });
+      const currentApiKey = process.env.GEMINI_API_KEY;
+      if (!currentApiKey) {
+        showToast("GEMINI_API_KEY is not configured in the environment.", 'error');
+        return;
+      }
+      const ai = new GoogleGenAI({ apiKey: currentApiKey });
       
       let prompt = "";
       const parts: any[] = [];
@@ -296,11 +277,32 @@ export default function App() {
 
       if (response.text) {
         updateActiveScript({ stylePrompt: response.text.trim() });
+        showToast("Đã tạo mô tả phong cách thành công", 'success');
       }
     } catch (err) {
       console.error("Style generation failed:", err);
-      alert("Không thể tạo mô tả phong cách. Vui lòng thử lại.");
+      showToast("Không thể tạo mô tả phong cách. Vui lòng thử lại.", 'error');
     }
+  };
+
+  const stopGeneration = (sceneId: string) => {
+    if (abortControllersRef.current[sceneId]) {
+      abortControllersRef.current[sceneId].abort();
+      delete abortControllersRef.current[sceneId];
+    }
+    setHistory(prev => {
+      if (!prev.present.activeScriptId) return prev;
+      const newScripts = prev.present.scripts.map(s => {
+        if (s.id === prev.present.activeScriptId) {
+          return {
+            ...s,
+            scenes: s.scenes.map(sc => sc.id === sceneId ? { ...sc, isGenerating: false, progress: 0 } : sc)
+          };
+        }
+        return s;
+      });
+      return { ...prev, present: { ...prev.present, scripts: newScripts } };
+    });
   };
 
   const generateImage = async (sceneId: string, customPrompt?: string, baseImageUrl?: string, previousHistory: string[] = []) => {
@@ -308,8 +310,22 @@ export default function App() {
     const scene = activeScript.scenes.find(s => s.id === sceneId);
     if (!scene) return;
 
-    // Use current contextDescription if no customPrompt is provided (Regenerate case)
-    const finalPrompt = customPrompt !== undefined ? customPrompt : scene.contextDescription;
+    // Create abort controller for this generation
+    const controller = new AbortController();
+    abortControllersRef.current[sceneId] = controller;
+
+    // Timeout after 60 seconds
+    const timeoutId = setTimeout(() => {
+      if (abortControllersRef.current[sceneId]) {
+        console.warn(`Generation timed out for scene ${sceneId}`);
+        controller.abort("Timeout");
+      }
+    }, 60000);
+
+    // Always keep the original context description as the foundation
+    const baseContext = scene.contextDescription;
+    // The refinement prompt (from "Common Errors" or user input)
+    const refinementPrompt = customPrompt || "";
 
     // Check if we have any reference image in the project if this scene is empty
     const hasAnyImage = activeScript.scenes.some(s => s.imageUrl);
@@ -330,14 +346,14 @@ export default function App() {
     }
 
     // Update generating state
-    const setGenerating = (isGen: boolean, prog: number) => {
+    const setGenerating = (isGen: boolean, prog: number, error?: string) => {
       setHistory(prev => {
         if (!prev.present.activeScriptId) return prev;
         const newScripts = prev.present.scripts.map(s => {
           if (s.id === prev.present.activeScriptId) {
             return {
               ...s,
-              scenes: s.scenes.map(sc => sc.id === sceneId ? { ...sc, isGenerating: isGen, progress: prog } : sc)
+              scenes: s.scenes.map(sc => sc.id === sceneId ? { ...sc, isGenerating: isGen, progress: prog, error } : sc)
             };
           }
           return s;
@@ -345,6 +361,12 @@ export default function App() {
         return { ...prev, present: { ...prev.present, scripts: newScripts } };
       });
     };
+
+    const currentApiKey = process.env.GEMINI_API_KEY;
+    if (!currentApiKey) {
+      showToast("GEMINI_API_KEY is not configured in the environment.", 'error');
+      return;
+    }
 
     setGenerating(true, 0);
 
@@ -370,8 +392,13 @@ export default function App() {
     }, 500);
 
     try {
-      const apiKey = apiKeyRef.current || process.env.GEMINI_API_KEY;
-      const ai = new GoogleGenAI({ apiKey });
+      const currentApiKey = process.env.GEMINI_API_KEY;
+      if (!currentApiKey) {
+        showToast("GEMINI_API_KEY is not configured in the environment.", 'error');
+        setGenerating(false, 0);
+        return;
+      }
+      const ai = new GoogleGenAI({ apiKey: currentApiKey });
       
       const parts: any[] = [];
       
@@ -402,21 +429,25 @@ export default function App() {
       cameraInstruction += `Gợi ý các góc quay: ${cameraAngles.join(', ')}.`;
 
       // 1. Base Prompt with Strict Syntax
-      let fullPrompt = "";
-      
-      if (activeScript.stylePrompt) {
-        fullPrompt = `*YÊU CẦU QUAN TRỌNG: Chỉ sử dụng hình ảnh tôi cung cấp để lấy thông tin về ngoại hình và trang phục của nhân vật. Toàn bộ bối cảnh, môi trường và hành động phải được tạo ra hoàn toàn dựa trên văn bản prompt sau đây. Không được sao chép hay tái sử dụng bối cảnh từ hình ảnh gốc*
+      const stylePart = activeScript.stylePrompt 
+        ? `Hãy vẽ lại nhân vật tôi gửi, với chính xác ngoại hình, trang phục nhưng customize theo phong cách: ${activeScript.stylePrompt}`
+        : "Hãy vẽ lại hình ảnh dựa trên mô tả.";
 
-Hãy vẽ lại nhân vật tôi gửi, với chính xác ngoại hình, trang phục nhưng customize theo phong cách: ${activeScript.stylePrompt}
+      let fullPrompt = `*YÊU CẦU QUAN TRỌNG (BẮT BUỘC TUÂN THỦ TUYỆT ĐỐI):
+1. THAM CHIẾU CHÍNH XÁC 100% SẢN PHẨM: Nếu có sản phẩm đi kèm trong REFERENCE ASSETS, hãy vẽ chính xác 100% hình dáng, màu sắc và đặc biệt là CÁC NỘI DUNG VĂN BẢN (TEXT) trên sản phẩm đó. Không được làm sai lệch, mờ nhòe hay thay đổi bất kỳ ký tự nào trên sản phẩm.
+2. Chỉ sử dụng hình ảnh tôi cung cấp để lấy thông tin về ngoại hình và trang phục của nhân vật. 
+3. Toàn bộ bối cảnh, môi trường và hành động phải được tạo ra hoàn toàn dựa trên văn bản prompt dưới đây. 
+4. Không được sao chép hay tái sử dụng bối cảnh từ hình ảnh gốc.
 
-*Bối cảnh của phân cảnh là: ${finalPrompt}*
+${stylePart}
+
+*BỐI CẢNH CHÍNH CỦA PHÂN CẢNH: ${baseContext}*
+
+${refinementPrompt ? `\n\nYÊU CẦU TINH CHỈNH BỔ SUNG (ƯU TIÊN SAU BỐI CẢNH CHÍNH): ${refinementPrompt}` : ""}
 
 ${cameraInstruction}
 
-HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay mô tả nào. Toàn bộ phản hồi của bạn phải chỉ là hình ảnh được tạo ra.`;
-      } else {
-        fullPrompt = finalPrompt;
-      }
+HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay mô tả nào bên ngoài hình ảnh. Toàn bộ phản hồi của bạn phải chỉ là hình ảnh được tạo ra.*`;
 
       // 2. Add Base Image for Refinement (if provided)
       if (baseImageUrl) {
@@ -439,13 +470,15 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
         fullPrompt += "\n\nREFERENCE ASSETS:";
         selectedChars.forEach(c => {
           fullPrompt += `\n- Character "${c.name}": ${c.description}`;
-          c.images.forEach(img => {
+          // Limit to 2 reference images per character to avoid payload issues
+          c.images.slice(0, 2).forEach(img => {
             parts.push({ inlineData: { data: img.split(',')[1], mimeType: "image/png" } });
           });
         });
         selectedProds.forEach(p => {
           fullPrompt += `\n- Product "${p.name}": ${p.description}`;
-          p.images.forEach(img => {
+          // Limit to 2 reference images per product to avoid payload issues
+          p.images.slice(0, 2).forEach(img => {
             parts.push({ inlineData: { data: img.split(',')[1], mimeType: "image/png" } });
           });
         });
@@ -491,8 +524,9 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
 
       // Determine Aspect Ratio
       let aspectRatio = "16:9";
+      const supportedARs = ["1:1", "3:4", "4:3", "9:16", "16:9"];
       const arMatch = scene.contextDescription.match(/(\d+:\d+)/);
-      if (arMatch) {
+      if (arMatch && supportedARs.includes(arMatch[1])) {
         aspectRatio = arMatch[1];
       }
 
@@ -504,7 +538,16 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
             aspectRatio: aspectRatio as any
           }
         }
-      }));
+      }), 3, 2000, controller.signal, (attempt, delay) => {
+        console.log(`Retrying generation for scene ${sceneId}: attempt ${attempt}, delay ${delay}ms`);
+        // We could update the progress or show a "Retrying..." message here if we had a dedicated field
+      });
+
+      // Check if still generating for this scene
+      if (controller.signal.aborted) {
+        clearInterval(progressInterval);
+        return;
+      }
 
       let imageUrl = '';
       for (const part of response.candidates[0].content.parts) {
@@ -515,6 +558,7 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
       }
 
       if (imageUrl) {
+        clearTimeout(timeoutId);
         const newVersion: ImageVersion = {
           id: Math.random().toString(36).substr(2, 9),
           url: imageUrl,
@@ -536,7 +580,8 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
                     imageHistory: [newVersion, ...history],
                     mainImageId: newVersion.id,
                     isGenerating: false,
-                    progress: 100
+                    progress: 100,
+                    error: undefined
                   };
                 }
                 return sc;
@@ -548,22 +593,38 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
           return { ...prev, present: { ...prev.present, scripts: newScripts } };
         });
         clearInterval(progressInterval);
+        delete abortControllersRef.current[sceneId];
       } else {
         throw new Error("No image generated");
       }
 
     } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.message === "Aborted" || err === "Timeout") {
+        console.log("Generation aborted or timed out for scene:", sceneId);
+        if (err === "Timeout") {
+          showToast("Quá thời gian tạo ảnh. Vui lòng thử lại.", 'error');
+          setGenerating(false, 0, "Timeout");
+        }
+        return;
+      }
       console.error("Generation failed:", err);
       const errorStr = JSON.stringify(err);
       const isQuotaError = errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED');
 
       clearInterval(progressInterval);
-      setGenerating(false, 0);
+      delete abortControllersRef.current[sceneId];
+      
+      const errorMessage = isQuotaError 
+        ? "Hết hạn mức sử dụng (Quota Exceeded). Vui lòng thử lại sau."
+        : `${t.generationFailed}: ${err.message || "Lỗi không xác định"}`;
+
+      setGenerating(false, 0, errorMessage);
 
       if (isQuotaError) {
-        alert("Hết hạn mức sử dụng (Quota Exceeded). Vui lòng thử lại sau.");
+        showToast("Hết hạn mức sử dụng (Quota Exceeded). Vui lòng thử lại sau.", 'error');
       } else {
-        alert(t.generationFailed);
+        showToast(errorMessage, 'error');
       }
     }
   };
@@ -720,16 +781,6 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
               >
                 <Redo2 size={18} className="md:w-5 md:h-5" />
               </button>
-              <button 
-                onClick={() => {
-                  setTempApiKey(history.present.apiKey);
-                  setShowApiModal(true);
-                }}
-                className="p-1.5 md:p-2 text-[#3667c5] hover:bg-blue-50 rounded-lg transition-colors"
-                title={t.apiKey}
-              >
-                <Key size={18} className="md:w-5 md:h-5" />
-              </button>
             </div>
           </div>
         </div>
@@ -874,6 +925,7 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
                         items={activeScript.characters} 
                         language={history.present.language}
                         onUpdate={(chars) => updateActiveScript({ characters: chars as Character[] })} 
+                        showToast={showToast}
                       />
                     </div>
                     <div className="h-px bg-blue-50" />
@@ -884,6 +936,7 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
                         items={activeScript.products} 
                         language={history.present.language}
                         onUpdate={(prods) => updateActiveScript({ products: prods as Product[] })} 
+                        showToast={showToast}
                       />
                     </div>
                   </>
@@ -953,6 +1006,7 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
                     onStylePromptChange={(style) => updateActiveScript({ stylePrompt: style })}
                     onGenerate={generateImage}
                     onGenerateAll={generateAll}
+                    onStop={stopGeneration}
                     onViewImage={(scene) => setViewingSceneId(scene.id)}
                     onDeleteScene={(sceneId) => {
                       const newScenes = activeScript.scenes.filter(s => s.id !== sceneId);
@@ -1008,39 +1062,9 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
                       ))}
                     </div>
                   </div>
-
-                    {/* API Key Configuration */}
-                    <div className="space-y-3 pt-6 border-t border-gray-100">
-                      <label className="text-sm font-black text-[#3667c5] uppercase tracking-widest">{t.apiKey}</label>
-                      <div className="relative">
-                        <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                        <input 
-                          type="password"
-                          value={tempApiKey}
-                          onChange={(e) => setTempApiKey(e.target.value)}
-                          onFocus={() => setTempApiKey(history.present.apiKey)}
-                          placeholder={t.apiKeyPlaceholder}
-                          className="w-full pl-12 pr-4 py-4 bg-white border-2 border-gray-100 rounded-2xl focus:ring-4 focus:ring-[#3667c5]/10 focus:border-[#3667c5] outline-none transition-all font-mono"
-                        />
-                      </div>
-                      <p className="text-xs text-gray-400 px-2">
-                        {t.apiKeyNote}
-                      </p>
-                      <button 
-                        onClick={handleSaveApiKey}
-                        disabled={isValidatingApiKey}
-                        className={cn(
-                          "w-full btn-primary py-4 font-bold text-lg shadow-xl shadow-[#3667c5]/20 flex items-center justify-center gap-2",
-                          isValidatingApiKey && "opacity-70 cursor-not-allowed"
-                        )}
-                      >
-                        {isValidatingApiKey && <RefreshCw className="animate-spin" size={20} />}
-                        {t.saveConfig}
-                      </button>
-                    </div>
-                  </div>
                 </div>
-              )}
+              </div>
+            )}
             </div>
           </div>
         </main>
@@ -1055,6 +1079,7 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
               const currentVersion = viewingScene.imageHistory?.find(v => v.url === baseImageUrl);
               generateImage(viewingScene.id, prompt, baseImageUrl, currentVersion?.refineHistory || []);
             }}
+            onStop={stopGeneration}
             onSetMainImage={(versionId) => setMainImage(viewingScene.id, versionId)}
             onDeleteVersion={(versionId) => deleteImageVersion(viewingScene.id, versionId)}
             onDeleteRefineHistory={(versionId, idx) => deleteRefineHistory(viewingScene.id, versionId, idx)}
@@ -1082,6 +1107,31 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
           />
         )}
 
+        {/* Toast Container */}
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[200] flex flex-col gap-3 pointer-events-none w-full max-w-md px-4">
+          <AnimatePresence>
+            {toasts.map(toast => (
+              <motion.div
+                key={toast.id}
+                initial={{ opacity: 0, y: -20, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+                className={cn(
+                  "pointer-events-auto flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border backdrop-blur-md",
+                  toast.type === 'success' ? "bg-white/90 border-green-100 text-green-800" :
+                  toast.type === 'error' ? "bg-white/90 border-red-100 text-red-800" :
+                  "bg-white/90 border-blue-100 text-blue-800"
+                )}
+              >
+                {toast.type === 'success' && <CheckCircle2 size={20} className="text-green-500 shrink-0" />}
+                {toast.type === 'error' && <AlertCircle size={20} className="text-red-500 shrink-0" />}
+                {toast.type === 'info' && <Info size={20} className="text-blue-500 shrink-0" />}
+                <p className="text-sm font-bold leading-tight">{toast.message}</p>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+
         {showWarningModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
             <motion.div 
@@ -1103,7 +1153,10 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
               <h3 className="text-2xl font-black text-gray-800 mb-4">{t.importantNote}</h3>
               <p className="text-gray-500 leading-relaxed mb-8">{showWarningModal.message}</p>
               <button 
-                onClick={() => setShowWarningModal(null)}
+                onClick={() => {
+                  if (showWarningModal.onConfirm) showWarningModal.onConfirm();
+                  setShowWarningModal(null);
+                }}
                 className="w-full btn-primary py-4 font-bold text-lg"
               >
                 {t.understand}
@@ -1169,112 +1222,6 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
           </button>
         </motion.div>
       )}
-
-      {/* Floating QR Bubble */}
-      <div className="fixed bottom-8 right-8 z-50">
-        <button 
-          onClick={() => setShowQrModal(true)}
-          className="w-16 h-16 bg-[#3667c5] rounded-full flex items-center justify-center text-white shadow-2xl shadow-[#3667c5]/40 hover:scale-110 transition-transform group"
-        >
-          <ExternalLink size={28} className="group-hover:rotate-12 transition-transform" />
-        </button>
-      </div>
-
-      {/* QR Modal */}
-      <AnimatePresence>
-        {showQrModal && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowQrModal(false)}
-              className="absolute inset-0 bg-black/20 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-sm bg-white rounded-3xl shadow-2xl p-8 text-center"
-            >
-              <button onClick={() => setShowQrModal(false)} className="absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-full transition-colors">
-                <X size={20} />
-              </button>
-              <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                <ExternalLink className="text-[#3667c5] w-8 h-8" />
-              </div>
-              <h3 className="text-xl font-bold text-gray-800 mb-2">{t.visitWebsite}</h3>
-              <p className="text-sm text-gray-500 mb-8">{t.scanQr}</p>
-              <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm inline-block mb-8">
-                <QRCodeSVG value="https://mtholdings.vn/" size={200} fgColor="#3667c5" />
-              </div>
-              <a 
-                href="https://mtholdings.vn/" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 text-[#3667c5] font-bold hover:underline"
-              >
-                mtholdings.vn
-                <ExternalLink size={16} />
-              </a>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* API Modal */}
-      <AnimatePresence>
-        {showApiModal && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowApiModal(false)}
-              className="absolute inset-0 bg-black/20 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl p-8"
-            >
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xl font-bold text-gray-800">{t.apiKey}</h3>
-                <button onClick={() => setShowApiModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
-                  <X size={20} />
-                </button>
-              </div>
-              <p className="text-sm text-gray-500 mb-6">
-                {t.apiKeyNote}
-              </p>
-              <div className="space-y-4">
-                <div className="relative">
-                  <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                  <input 
-                    type="password"
-                    value={tempApiKey}
-                    onChange={(e) => setTempApiKey(e.target.value)}
-                    placeholder={t.apiKeyPlaceholder}
-                    className="w-full pl-12 pr-4 py-3 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-[#3667c5] focus:border-transparent outline-none transition-all"
-                  />
-                </div>
-                <button 
-                  onClick={handleSaveApiKey}
-                  disabled={isValidatingApiKey}
-                  className={cn(
-                    "w-full btn-primary py-3 font-bold flex items-center justify-center gap-2",
-                    isValidatingApiKey && "opacity-70 cursor-not-allowed"
-                  )}
-                >
-                  {isValidatingApiKey && <RefreshCw className="animate-spin" size={20} />}
-                  {t.saveConfig}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* Background Glow Elements */}
       <div className="fixed top-0 left-0 w-full h-full pointer-events-none -z-10 overflow-hidden">

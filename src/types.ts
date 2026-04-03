@@ -35,6 +35,7 @@ export interface Scene {
   mainImageId?: string;
   isGenerating?: boolean;
   progress?: number;
+  error?: string;
 }
 
 export interface Script {
@@ -49,7 +50,6 @@ export interface Script {
 
 export interface ProjectState {
   projectName: string;
-  apiKey: string;
   activeTab: string;
   language: 'vi' | 'en' | 'zh' | 'th' | 'ja' | 'ko';
   scripts: Script[];

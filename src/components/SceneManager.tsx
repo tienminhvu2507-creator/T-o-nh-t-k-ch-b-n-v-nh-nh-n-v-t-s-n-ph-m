@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Play, Layers, User, Package, Image as ImageIcon, RefreshCw, Download, Maximize2, X, Star, CheckCircle2, FileSpreadsheet, HelpCircle, Trash2 } from 'lucide-react';
+import { Plus, Play, Layers, User, Package, Image as ImageIcon, RefreshCw, Download, Maximize2, X, Star, CheckCircle2, FileSpreadsheet, HelpCircle, Trash2, AlertCircle } from 'lucide-react';
 import { Scene, Character, Product } from '../types';
 import { cn } from '../App';
 import { motion, AnimatePresence } from 'motion/react';
@@ -23,6 +23,7 @@ interface Props {
   onTranslate: (lang: Language) => void;
   onViewImage: (scene: Scene) => void;
   onDeleteScene: (sceneId: string) => void;
+  onStop: (sceneId: string) => void;
 }
 
 export const SceneManager: React.FC<Props> = ({ 
@@ -39,7 +40,8 @@ export const SceneManager: React.FC<Props> = ({
   onGenerateAll,
   onTranslate,
   onViewImage,
-  onDeleteScene
+  onDeleteScene,
+  onStop
 }) => {
   const t = translations[language];
   const [selectionModal, setSelectionModal] = useState<{
@@ -364,43 +366,78 @@ export const SceneManager: React.FC<Props> = ({
                           <button onClick={() => onViewImage(scene)} className="p-2 bg-white rounded-xl text-[#3667c5] hover:scale-110 transition-transform shadow-xl">
                             <Maximize2 size={16} />
                           </button>
-                          <button 
-                            onClick={() => onGenerate(scene.id)} 
-                            disabled={scene.isGenerating}
-                            className="p-2 bg-white rounded-xl text-[#3667c5] hover:scale-110 transition-transform shadow-xl flex items-center justify-center"
-                          >
-                            {scene.isGenerating ? (
-                              <div className="relative flex items-center justify-center">
+                          {scene.isGenerating ? (
+                            <div className="p-2 bg-white rounded-xl text-[#3667c5] shadow-xl flex items-center justify-center">
+                              <div className="relative flex flex-col items-center justify-center gap-1">
                                 <RefreshCw size={16} className="animate-spin" />
-                                <span className="absolute -top-4 text-[8px] font-black">{scene.progress || 0}%</span>
+                                <span className="text-[8px] font-black">{scene.progress || 0}%</span>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onStop(scene.id);
+                                  }}
+                                  className="px-2 py-0.5 bg-red-500 text-white rounded-full text-[8px] font-black hover:bg-red-600 transition-all shadow-lg mt-1"
+                                >
+                                  DỪNG
+                                </button>
                               </div>
-                            ) : (
-                              <RefreshCw size={16} />
-                            )}
-                          </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => onGenerate(scene.id)} 
+                                className="p-2 bg-white rounded-xl text-[#3667c5] hover:scale-110 transition-transform shadow-xl flex items-center justify-center"
+                              >
+                                <RefreshCw size={16} />
+                              </button>
+                              {scene.error && (
+                                <div className="p-2 bg-red-50 rounded-xl text-red-500 shadow-xl flex items-center justify-center group/err relative">
+                                  <AlertCircle size={16} />
+                                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 bg-red-600 text-white text-[10px] rounded opacity-0 group-hover/err:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                                    {scene.error}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ) : (
-                      <button 
-                        onClick={() => onGenerate(scene.id)}
-                        disabled={scene.isGenerating}
-                        className={cn(
-                          "w-full aspect-video rounded-2xl border-2 border-dashed border-blue-100 flex flex-col items-center justify-center text-blue-200 hover:border-[#3667c5] hover:text-[#3667c5] hover:bg-blue-50/50 transition-all group/gen",
-                          scene.isGenerating && "animate-pulse"
-                        )}
-                      >
-                        {scene.isGenerating ? (
+                      scene.isGenerating ? (
+                        <div className={cn(
+                          "w-full aspect-video rounded-2xl border-2 border-dashed border-blue-100 flex flex-col items-center justify-center text-blue-200 bg-blue-50/50 animate-pulse"
+                        )}>
                           <div className="flex flex-col items-center gap-2">
                             <RefreshCw size={24} className="animate-spin text-[#3667c5]" />
                             <span className="text-[10px] font-black text-[#3667c5]">{scene.progress || 0}%</span>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onStop(scene.id);
+                              }}
+                              className="px-3 py-1 bg-red-500 text-white rounded-full text-[10px] font-black hover:bg-red-600 transition-all shadow-lg"
+                            >
+                              DỪNG LẠI
+                            </button>
                           </div>
-                        ) : (
-                          <>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 w-full">
+                          <button 
+                            onClick={() => onGenerate(scene.id)}
+                            className="w-full aspect-video rounded-2xl border-2 border-dashed border-blue-100 flex flex-col items-center justify-center text-blue-200 hover:border-[#3667c5] hover:text-[#3667c5] hover:bg-blue-50/50 transition-all group/gen"
+                          >
                             <ImageIcon size={24} className="group-hover/gen:scale-110 transition-transform" />
                             <span className="text-[10px] mt-2 font-black uppercase tracking-widest">{t.generateImage}</span>
-                          </>
-                        )}
-                      </button>
+                          </button>
+                          {scene.error && (
+                            <div className="flex items-center gap-1 text-red-500 text-[10px] font-bold px-2 text-center">
+                              <AlertCircle size={12} className="flex-shrink-0" />
+                              <span className="truncate max-w-[150px]">{scene.error}</span>
+                            </div>
+                          )}
+                        </div>
+                      )
                     )}
                   </div>
                 </td>
@@ -497,34 +534,74 @@ export const SceneManager: React.FC<Props> = ({
                     <button onClick={() => onViewImage(scene)} className="p-3 bg-white rounded-2xl text-[#3667c5] shadow-xl">
                       <Maximize2 size={20} />
                     </button>
-                    <button 
-                      onClick={() => onGenerate(scene.id)} 
-                      disabled={scene.isGenerating}
-                      className="p-3 bg-white rounded-2xl text-[#3667c5] shadow-xl"
-                    >
-                      {scene.isGenerating ? (
+                    {scene.isGenerating ? (
+                      <div className="p-3 bg-white rounded-2xl text-[#3667c5] shadow-xl flex flex-col items-center justify-center gap-1">
                         <RefreshCw size={20} className="animate-spin" />
-                      ) : (
-                        <RefreshCw size={20} />
-                      )}
-                    </button>
+                        <span className="text-[8px] font-black">{scene.progress || 0}%</span>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onStop(scene.id);
+                          }}
+                          className="px-2 py-0.5 bg-red-500 text-white rounded-full text-[8px] font-black hover:bg-red-600 transition-all shadow-lg"
+                        >
+                          DỪNG
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => onGenerate(scene.id)} 
+                          className="p-3 bg-white rounded-2xl text-[#3667c5] shadow-xl flex flex-col items-center justify-center gap-1"
+                        >
+                          <RefreshCw size={20} />
+                        </button>
+                        {scene.error && (
+                          <div className="p-3 bg-red-50 rounded-2xl text-red-500 shadow-xl flex items-center justify-center group/err relative">
+                            <AlertCircle size={20} />
+                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-2 py-1 bg-red-600 text-white text-[10px] rounded opacity-0 group-hover/err:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                              {scene.error}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
-                <button 
-                  onClick={() => onGenerate(scene.id)}
-                  disabled={scene.isGenerating}
-                  className="w-full h-full flex flex-col items-center justify-center text-blue-200 bg-blue-50/30"
-                >
-                  {scene.isGenerating ? (
-                    <RefreshCw size={32} className="animate-spin text-[#3667c5]" />
-                  ) : (
-                    <>
+                scene.isGenerating ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center text-blue-200 bg-blue-50/30">
+                    <div className="flex flex-col items-center gap-2">
+                      <RefreshCw size={32} className="animate-spin text-[#3667c5]" />
+                      <span className="text-[10px] font-black text-[#3667c5]">{scene.progress || 0}%</span>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onStop(scene.id);
+                        }}
+                        className="px-4 py-1.5 bg-red-500 text-white rounded-full text-[10px] font-black hover:bg-red-600 transition-all shadow-lg"
+                      >
+                        DỪNG LẠI
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-2">
+                    <button 
+                      onClick={() => onGenerate(scene.id)}
+                      className="w-full h-full flex flex-col items-center justify-center text-blue-200 bg-blue-50/30"
+                    >
                       <ImageIcon size={32} />
                       <span className="text-[10px] mt-2 font-black uppercase tracking-widest">{t.generateImage}</span>
-                    </>
-                  )}
-                </button>
+                    </button>
+                    {scene.error && (
+                      <div className="flex items-center gap-1 text-red-500 text-[10px] font-bold px-2 text-center pb-2">
+                        <AlertCircle size={12} className="flex-shrink-0" />
+                        <span className="truncate max-w-[200px]">{scene.error}</span>
+                      </div>
+                    )}
+                  </div>
+                )
               )}
             </div>
           </div>

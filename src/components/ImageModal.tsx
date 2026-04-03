@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, ChevronLeft, ChevronRight, RefreshCw, Download, Send, Star, Trash2 } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, RefreshCw, Download, Send, Star, Trash2, AlertCircle } from 'lucide-react';
 import { Scene } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../App';
@@ -13,6 +13,7 @@ interface Props {
   onDeleteVersion: (versionId: string) => void;
   onDeleteRefineHistory: (versionId: string, idx: number) => void;
   onDownloadVersion: (url: string, name: string, highRes?: boolean) => void;
+  onStop: (sceneId: string) => void;
 }
 
 export const ImageModal: React.FC<Props> = ({ 
@@ -23,7 +24,8 @@ export const ImageModal: React.FC<Props> = ({
   onSetMainImage,
   onDeleteVersion,
   onDeleteRefineHistory,
-  onDownloadVersion
+  onDownloadVersion,
+  onStop
 }) => {
   const [refinePrompt, setRefinePrompt] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(scene.mainImageId || (scene.imageHistory?.[0]?.id) || null);
@@ -32,8 +34,13 @@ export const ImageModal: React.FC<Props> = ({
   const commonErrors = [
     { 
       id: 'consistency', 
-      label: 'Đồng nhất nhân vật', 
-      prompt: 'Ảnh tạo ra chưa đồng nhất chính xác ngoại hình nhân vật tôi gửi. Xem lại chính xác các ảnh tôi gửi và sử dụng ngoại hình của nhân vật tôi gửi để sửa lại ảnh vừa tạo ra' 
+      label: 'Đồng nhất NV và SP', 
+      prompt: 'Ảnh tạo ra chưa đồng nhất chính xác ngoại hình nhân vật và sản phẩm tôi gửi. Xem lại chính xác các ảnh tôi gửi và sử dụng ngoại hình của nhân vật và sản phẩm tôi gửi để sửa lại ảnh vừa tạo ra' 
+    },
+    { 
+      id: 'logic', 
+      label: 'Chưa logic nội dung', 
+      prompt: 'Đọc lại kịch bản (bao gồm cả những đoạn trước và sau đó) và đọc lại prompt vừa dùng để tạo ra ảnh để hình dung logic của kịch bản. Từ đó tinh chỉnh lại ảnh sao cho logic với nội dung, tránh trường hợp ảnh tạo ra khớp với prompt nhưng không liên quan gì tới nội dung' 
     },
     { 
       id: 'style', 
@@ -44,21 +51,6 @@ export const ImageModal: React.FC<Props> = ({
       id: 'angle', 
       label: 'Đổi góc độ', 
       prompt: 'Ảnh này vẽ ra có góc độ vẽ ảnh giống với ảnh trước đó hoặc ảnh sau đó. Hãy lựa chọn 1 góc độ khác với cả 2 ảnh đó để vẽ ảnh. Ví dụ: góc sau lưng nhân vật, góc qua vai nhân vật, góc cận cảnh hành động bàn tay, góc từ dưới lên, góc nghiêng cao, góc cao rộng toàn cảnh, góc cận sát mặt.' 
-    },
-    { 
-      id: 'ratio', 
-      label: 'Sai tỉ lệ ảnh', 
-      prompt: 'Sửa lại ảnh này dựa trên 3 ảnh được tạo ra gần nhất của app và dựa trên các ảnh được người dùng up lên nếu có để đồng nhất tỉ lệ kích thước ảnh theo các ảnh trên nhưng với nội dung cũ' 
-    },
-    { 
-      id: 'logic', 
-      label: 'Chưa logic nội dung', 
-      prompt: 'Đọc lại kịch bản (bao gồm cả những đoạn trước và sau đó) và đọc lại prompt vừa dùng để tạo ra ảnh để hình dung logic của kịch bản. Từ đó tinh chỉnh lại ảnh sao cho logic với nội dung, tránh trường hợp ảnh tạo ra khớp với prompt nhưng không liên quan gì tới nội dung' 
-    },
-    { 
-      id: 'policy', 
-      label: 'Lách chính sách', 
-      prompt: 'Một số từ ngữ có thể vi phạm chính sách tạo ảnh. Thay vì tập trung vào ngôn từ hãy tập trung mô tả bối cảnh, vị trí, hành động, biểu cảm và các chi tiết trong ảnh để lách chính sách và nỗ lực tạo ra hình ảnh vẫn minh hoạ được cho nội dung nhưng không vi phạm chính sách.' 
     }
   ];
 
@@ -137,8 +129,14 @@ export const ImageModal: React.FC<Props> = ({
                     fill="transparent"
                   ></circle>
                 </svg>
-                <div className="absolute inset-0 flex items-center justify-center font-black text-xl">
-                  {scene.progress || 0}%
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <div className="font-black text-xl mb-4">{scene.progress || 0}%</div>
+                  <button 
+                    onClick={() => onStop(scene.id)}
+                    className="px-4 py-1.5 bg-red-500 text-white rounded-full text-[10px] font-black hover:bg-red-600 transition-all shadow-lg"
+                  >
+                    DỪNG LẠI
+                  </button>
                 </div>
               </div>
               <p className="font-black tracking-widest animate-pulse uppercase">Đang tạo ảnh...</p>
@@ -327,6 +325,12 @@ export const ImageModal: React.FC<Props> = ({
                   </>
                 )}
               </button>
+              {scene.error && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-xs font-medium">
+                  <AlertCircle size={16} className="flex-shrink-0" />
+                  <span>{scene.error}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-3">

@@ -10,9 +10,10 @@ interface Props {
   items: (Character | Product)[];
   language: Language;
   onUpdate: (items: (Character | Product)[]) => void;
+  showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-export const AssetManager: React.FC<Props> = ({ type, items, language, onUpdate }) => {
+export const AssetManager: React.FC<Props> = ({ type, items, language, onUpdate, showToast }) => {
   const t = translations[language];
 
   const addItem = () => {
@@ -39,7 +40,7 @@ export const AssetManager: React.FC<Props> = ({ type, items, language, onUpdate 
 
     const currentImages = newItems[itemIndex].images;
     if (currentImages.length >= 5) {
-      alert(t.maxImages);
+      showToast(t.maxImages, 'error');
       return;
     }
 
