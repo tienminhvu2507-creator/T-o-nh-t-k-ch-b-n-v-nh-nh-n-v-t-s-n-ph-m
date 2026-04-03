@@ -54,6 +54,7 @@ export interface ProjectState {
   language: 'vi' | 'en' | 'zh' | 'th' | 'ja' | 'ko';
   scripts: Script[];
   activeScriptId: string | null;
+  userApiKey?: string;
 }
 
 export interface HistoryState {

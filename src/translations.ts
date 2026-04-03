@@ -111,6 +111,9 @@ Dưới đây là kịch bản cần phân đoạn thành các dòng (những g�
     downloadHighRes: 'Tải ảnh tăng độ phân giải?',
     yes: 'Có',
     no: 'Không',
+    apiKey: 'API Key',
+    apiKeyPlaceholder: 'Nhập Gemini API Key của bạn...',
+    apiKeyNote: 'Nếu bạn nhập API Key tại đây, hệ thống sẽ ưu tiên sử dụng key của bạn để tạo ảnh.',
   },
   en: {
     home: 'HOME',
@@ -221,6 +224,9 @@ Below is the script that needs to be segmented into lines (what I paste will be 
     selectLanguage: 'Select Language',
     stylePrompt: 'Style',
     scriptTable: 'SCRIPT TABLE',
+    apiKey: 'API Key',
+    apiKeyPlaceholder: 'Enter your Gemini API Key...',
+    apiKeyNote: 'If you enter an API Key here, the system will prioritize using your key for image generation.',
   },
   zh: {
     home: '首页',

@@ -48,6 +48,7 @@ const INITIAL_STATE: ProjectState = {
   language: 'vi',
   scripts: [],
   activeScriptId: null,
+  userApiKey: '',
 };
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -113,6 +114,7 @@ export default function App() {
   const [viewingSceneId, setViewingSceneId] = useState<string | null>(null);
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [editingScriptTitle, setEditingScriptTitle] = useState('');
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const abortControllersRef = useRef<Record<string, AbortController>>({});
 
   const headerRef = useRef<HTMLDivElement>(null);
@@ -239,7 +241,7 @@ export default function App() {
     if (!activeScript) return;
     
     try {
-      const currentApiKey = process.env.GEMINI_API_KEY;
+      const currentApiKey = history.present.userApiKey || process.env.GEMINI_API_KEY;
       if (!currentApiKey) {
         showToast("GEMINI_API_KEY is not configured in the environment.", 'error');
         return;
@@ -362,7 +364,7 @@ export default function App() {
       });
     };
 
-    const currentApiKey = process.env.GEMINI_API_KEY;
+    const currentApiKey = history.present.userApiKey || process.env.GEMINI_API_KEY;
     if (!currentApiKey) {
       showToast("GEMINI_API_KEY is not configured in the environment.", 'error');
       return;
@@ -392,7 +394,7 @@ export default function App() {
     }, 500);
 
     try {
-      const currentApiKey = process.env.GEMINI_API_KEY;
+      const currentApiKey = history.present.userApiKey || process.env.GEMINI_API_KEY;
       if (!currentApiKey) {
         showToast("GEMINI_API_KEY is not configured in the environment.", 'error');
         setGenerating(false, 0);
@@ -766,6 +768,17 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
             <div className="h-6 w-px bg-gray-200 mx-1 md:mx-2" />
             <div className="flex items-center gap-1">
               <button 
+                onClick={() => setShowApiKeyModal(true)}
+                className={cn(
+                  "p-1.5 md:p-2 rounded-lg transition-all",
+                  history.present.userApiKey ? "text-green-500 bg-green-50" : "text-[#3667c5] hover:bg-blue-50"
+                )}
+                title={t.apiKey}
+              >
+                <Key size={18} className="md:w-5 md:h-5" />
+              </button>
+              <div className="h-6 w-px bg-gray-200 mx-1 md:mx-2" />
+              <button 
                 onClick={undo} 
                 disabled={!canUndo}
                 className={cn("p-1.5 md:p-2 rounded-lg transition-colors", canUndo ? "text-[#3667c5] hover:bg-blue-50" : "text-gray-300")}
@@ -1062,6 +1075,27 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
                       ))}
                     </div>
                   </div>
+
+                  <div className="h-px bg-blue-50 my-8" />
+
+                  <div className="space-y-6">
+                    <div className="flex flex-col items-center gap-2">
+                      <label className="text-sm font-black text-[#3667c5] uppercase tracking-widest block text-center">{t.apiKey}</label>
+                      <p className="text-xs text-gray-500 text-center max-w-md">{t.apiKeyNote}</p>
+                    </div>
+                    <div className="relative">
+                      <div className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400">
+                        <Key size={18} />
+                      </div>
+                      <input 
+                        type="password"
+                        value={history.present.userApiKey || ''}
+                        onChange={(e) => updateState({ userApiKey: e.target.value })}
+                        placeholder={t.apiKeyPlaceholder}
+                        className="w-full pl-14 pr-6 py-4 bg-white border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-[#3667c5] outline-none transition-all font-medium shadow-sm"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -1161,6 +1195,46 @@ HƯỚNG DẪN ĐẦU RA: Không viết bất kỳ văn bản, tiêu đề hay m
               >
                 {t.understand}
               </button>
+            </motion.div>
+          </div>
+        )}
+
+        {showApiKeyModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowApiKeyModal(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="relative w-full max-w-md bg-white rounded-[32px] shadow-2xl p-10"
+            >
+              <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                <Key className="text-[#3667c5] w-8 h-8" />
+              </div>
+              <h3 className="text-2xl font-black text-gray-800 mb-2 text-center">{t.apiKey}</h3>
+              <p className="text-gray-500 text-sm mb-8 text-center">{t.apiKeyNote}</p>
+              
+              <div className="space-y-4">
+                <input 
+                  type="password"
+                  value={history.present.userApiKey || ''}
+                  onChange={(e) => updateState({ userApiKey: e.target.value })}
+                  placeholder={t.apiKeyPlaceholder}
+                  className="w-full px-6 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-[#3667c5] outline-none transition-all font-medium"
+                />
+                <button 
+                  onClick={() => setShowApiKeyModal(false)}
+                  className="w-full btn-primary py-4 font-bold text-lg"
+                >
+                  {t.save}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
